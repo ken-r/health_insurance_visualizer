@@ -47,11 +47,11 @@ BAG_VERSICHERER = {
     1318: "Wädenswil",
 }
 
-MAX_AMOUNT_AFTER_FRANCHISE = 700
-DECIMAL_AFTER_FRANCHISE = 0.10 # We need to pay 10% of costs after franchise
+MAX_AMOUNT_AFTER_DEDUCTIBLE = 700
+DECIMAL_AFTER_DEDUCTIBLE = 0.10 # We need to pay 10% of costs after deductible
 
-CHILD_LVL_TO_AMOUNT = {"FRAST1": 0, "FRAST2": 100, "FRAST3": 200, "FRAST4": 300, "FRAST5": 400, "FRAST6": 500, "FRAST7": 600}
-ADULT_LVL_TO_AMOUNT = {"FRAST1": 300, "FRAST2": 500, "FRAST3": 1000, "FRAST4": 1500, "FRAST5": 2000, "FRAST6": 2500}
+DEDUCTIBLE_CHILD_LVL_TO_AMOUNT = {"FRAST1": 0, "FRAST2": 100, "FRAST3": 200, "FRAST4": 300, "FRAST5": 400, "FRAST6": 500, "FRAST7": 600}
+DEDUCTIBLE_ADULT_LVL_TO_AMOUNT = {"FRAST1": 300, "FRAST2": 500, "FRAST3": 1000, "FRAST4": 1500, "FRAST5": 2000, "FRAST6": 2500}
 
 # Load data once when app starts (outside server function)
 try:
@@ -90,7 +90,7 @@ def server(input, output, session):
             return ui.card(
                 ui.input_numeric("birth_year", "Year of birth", value=2000, min=1910, max=2024),
                 ui.output_ui("municipality_select"),
-                ui.output_ui("franchise_select"),
+                ui.output_ui("deductible_select"),
                 ui.input_radio_buttons(
                     "accident_insurance",
                     "Include accident insurance?",
@@ -105,12 +105,12 @@ def server(input, output, session):
                 ui.h4("Entered Personal Details"),
                 ui.p(f"Year of birth: {personal_details_locked['birth_year']}"),
                 ui.p(f"Municipality: {location_display()}"),
-                ui.p(f"Franchise: {franchise_display()}"),
+                ui.p(f"Deductible: {deductible_display()}"),
                 ui.p(f"Accident insurance: {accident_display()}"),
                 ui.input_action_button("modify_details", "Modify"),
                 ui.card_header("Insurance Cost Comparison"),
                 ui.output_data_frame("insurance_table"),
-                ui.output_plot("franchises_comparison_plot")
+                ui.output_plot("deductibles_comparison_plot")
             )
 
 
@@ -121,7 +121,7 @@ def server(input, output, session):
         personal_details.set({
             "birth_year": input.birth_year(),
             "location": input.location(),
-            "franchise": input.franchise(),
+            "deductible": input.deductible(),
             "accident_insurance": input.accident_insurance()
         })
         page_state.set('results')
@@ -145,16 +145,16 @@ def server(input, output, session):
             return 'AKL-ERW'
         
     @reactive.calc
-    def franchise_display():
-        return f"{franchise_amount()} CHF"
+    def deductible_display():
+        return f"{deductible_amount()} CHF"
     
     @reactive.calc
-    def franchise_amount():
-        franchise_lvl = personal_details.get()['franchise']
-        return CHILD_LVL_TO_AMOUNT[franchise_lvl] if is_child() else ADULT_LVL_TO_AMOUNT[franchise_lvl]
+    def deductible_amount():
+        deductible_lvl = personal_details.get()['deductible']
+        return DEDUCTIBLE_CHILD_LVL_TO_AMOUNT[deductible_lvl] if is_child() else DEDUCTIBLE_ADULT_LVL_TO_AMOUNT[deductible_lvl]
     
-    def franchise_amount_for_person(franchise_level, age_class):
-        return CHILD_LVL_TO_AMOUNT[franchise_level] if age_class == 'AKL-KIN' else ADULT_LVL_TO_AMOUNT[franchise_level]
+    def deductible_amount_for_person(deductible_level, age_class):
+        return DEDUCTIBLE_CHILD_LVL_TO_AMOUNT[deductible_level] if age_class == 'AKL-KIN' else DEDUCTIBLE_ADULT_LVL_TO_AMOUNT[deductible_level]
 
     @reactive.calc
     def location_display():
@@ -183,11 +183,11 @@ def server(input, output, session):
         return birth_year is not None and isinstance(birth_year, int) and 1900 <= birth_year <= 2025
 
     @render.ui
-    def franchise_select():
+    def deductible_select():
         birth_year = input.birth_year()
         if not age_validation():
             return ui.div(
-                ui.tags.label("Franchise", class_="form-label"),
+                ui.tags.label("Deductible", class_="form-label"),
                 ui.tags.select(
                     disabled=True,
                     title="Please enter your birth year.",
@@ -196,12 +196,12 @@ def server(input, output, session):
                 ),
                 class_="form-group shiny-input-container"
                 ) 
-        franchise_options = ADULT_LVL_TO_AMOUNT if birth_year < 2008 else CHILD_LVL_TO_AMOUNT
+        deductible_options = DEDUCTIBLE_ADULT_LVL_TO_AMOUNT if birth_year < 2008 else DEDUCTIBLE_CHILD_LVL_TO_AMOUNT
 
         return ui.input_select(
-            "franchise",
-            "Franchise",
-            choices=franchise_options,
+            "deductible",
+            "Deductible",
+            choices=deductible_options,
             selected=None
         )
     
@@ -215,7 +215,7 @@ def server(input, output, session):
         df = premiums_df[(premiums_df['Kanton'] == canton) & 
                            (premiums_df['Region'] == f"PR-REG CH{region}") & 
                            (premiums_df['Altersklasse'] == age_category()) &
-                           (premiums_df['Franchisestufe'] == input.franchise()) &
+                           (premiums_df['Franchisestufe'] == input.deductible()) &
                            (premiums_df['Unfalleinschluss'] == input.accident_insurance())].sort_values(by='Prämie')
 
         return df
@@ -229,13 +229,8 @@ def server(input, output, session):
         )
 
     @render.plot
-    def franchises_comparison_plot():
+    def deductibles_comparison_plot():
         selected = input.insurance_table_selected_rows()
-
-        # # Debug information
-        # print(f"Selected rows: {selected}")
-        # print(f"Type: {type(selected)}")
-        # print(f"Length: {len(selected) if selected else 'None/Empty'}")
 
         if not selected:
             return None
@@ -243,8 +238,8 @@ def server(input, output, session):
         df = calculate_data()
         row = df.iloc[selected[0]]
         insurance_provider, insurance_plan = row['Versicherung'], row['Tarifbezeichnung']
-        
-        franchise_levels_to_compare = premiums_df[
+
+        deductible_levels_to_compare = premiums_df[
             (premiums_df['Versicherung'] == insurance_provider) &
             (premiums_df['Tarifbezeichnung'] == insurance_plan) &
             (premiums_df['Unfalleinschluss'] == row['Unfalleinschluss']) &
@@ -259,15 +254,15 @@ def server(input, output, session):
         fig, ax = plt.subplots(figsize=(8, 5))
 
 
-        for _, franchise_row in franchise_levels_to_compare.iterrows():    
-            premium_amount = franchise_row['Prämie']
-            franchise_amount = franchise_amount_for_person(franchise_row['Franchisestufe'], row['Altersklasse'])
+        for _, deductible_row in deductible_levels_to_compare.iterrows():    
+            premium_amount = deductible_row['Prämie']
+            deductible_amount = deductible_amount_for_person(deductible_row['Franchisestufe'], row['Altersklasse'])
             annual_costs = np.array([
-                calculate_annual_cost(x, franchise_amount, premium_amount)
+                calculate_annual_cost(x, deductible_amount, premium_amount)
                 for x in treatment_costs
             ])
 
-            ax.plot(treatment_costs, annual_costs, label=f'Franchise {franchise_amount} CHF')
+            ax.plot(treatment_costs, annual_costs, label=f'{deductible_amount} CHF Deductible')
 
         ax.set_xlabel('Treatment Costs (CHF)')
         ax.set_ylabel('Total Costs for You (CHF)')
@@ -278,10 +273,10 @@ def server(input, output, session):
         return fig
       
     
-    def calculate_annual_cost(treatment_costs, franchise_level, premium):
-        amount_after_franchise = max(0, treatment_costs - franchise_level)
-        costs_to_cover_after_franchise = min(amount_after_franchise * DECIMAL_AFTER_FRANCHISE, MAX_AMOUNT_AFTER_FRANCHISE)
-        total_treatment_costs_to_cover = min(treatment_costs, franchise_level) + costs_to_cover_after_franchise
+    def calculate_annual_cost(treatment_costs, deductible_level, premium):
+        amount_after_deductible = max(0, treatment_costs - deductible_level)
+        costs_to_cover_after_deductible = min(amount_after_deductible * DECIMAL_AFTER_DEDUCTIBLE, MAX_AMOUNT_AFTER_DEDUCTIBLE)
+        total_treatment_costs_to_cover = min(treatment_costs, deductible_level) + costs_to_cover_after_deductible
         total_cost = total_treatment_costs_to_cover + 12 * premium
         return total_cost
 
