@@ -1,5 +1,7 @@
 from shiny import App, reactive, render, ui
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 
 # Mapping the codes from the dataset to their actual names.
 # I only found a pdf file with this information, so I manually created this dictionary.
@@ -48,8 +50,8 @@ BAG_VERSICHERER = {
 MAX_AMOUNT_AFTER_FRANCHISE = 700
 DECIMAL_AFTER_FRANCHISE = 0.10 # We need to pay 10% of costs after franchise
 
-CHILD_LVL_TO_AMOUNT = {"FRAST1": "0 CHF", "FRAST2": "100 CHF", "FRAST3": "200 CHF", "FRAST4": "300 CHF", "FRAST5": "400 CHF", "FRAST6": "500 CHF", "FRAST7": "600 CHF"}
-ADULT_LVL_TO_AMOUNT = {"FRAST1": "300 CHF", "FRAST2": "500 CHF", "FRAST3": "1000 CHF", "FRAST4": "1500 CHF", "FRAST5": "2000 CHF", "FRAST6": "2500 CHF"}
+CHILD_LVL_TO_AMOUNT = {"FRAST1": 0, "FRAST2": 100, "FRAST3": 200, "FRAST4": 300, "FRAST5": 400, "FRAST6": 500, "FRAST7": 600}
+ADULT_LVL_TO_AMOUNT = {"FRAST1": 300, "FRAST2": 500, "FRAST3": 1000, "FRAST4": 1500, "FRAST5": 2000, "FRAST6": 2500}
 
 # Load data once when app starts (outside server function)
 try:
@@ -66,10 +68,11 @@ try:
 except Exception as e:
     print(f"Error loading data: {e}")
 
+
 # Calculate count of each PLZ and append as a new column
 premium_regions_df['plz_count'] = premium_regions_df.groupby('PLZ')['PLZ'].transform('count')
 
-municipality_choices = {"": ""} | {f"{row['Kanton']}|{row['Region']}|{row['PLZ']}|{row['Ort']}|{row['Gemeinde']}": f"{row['PLZ']} {row['Ort']}" + (f" (Gemeinde {row['Gemeinde']})" if row['plz_count'] > 1 else "")
+municipality_choices = {'': ''} | {f"{row['Kanton']}|{row['Region']}|{row['PLZ']}|{row['Ort']}|{row['Gemeinde']}": f"{row['PLZ']} {row['Ort']}" + (f" (Gemeinde {row['Gemeinde']})" if row['plz_count'] > 1 else "")
                 for _, row in premium_regions_df.iterrows()}
 
 app_ui = ui.page_fixed( 
@@ -106,7 +109,8 @@ def server(input, output, session):
                 ui.p(f"Accident insurance: {accident_display()}"),
                 ui.input_action_button("modify_details", "Modify"),
                 ui.card_header("Insurance Cost Comparison"),
-                ui.output_data_frame("insurance_table")
+                ui.output_data_frame("insurance_table"),
+                ui.output_plot("franchises_comparison_plot")
             )
 
 
@@ -142,9 +146,16 @@ def server(input, output, session):
         
     @reactive.calc
     def franchise_display():
+        return f"{franchise_amount()} CHF"
+    
+    @reactive.calc
+    def franchise_amount():
         franchise_lvl = personal_details.get()['franchise']
         return CHILD_LVL_TO_AMOUNT[franchise_lvl] if is_child() else ADULT_LVL_TO_AMOUNT[franchise_lvl]
     
+    def franchise_amount_for_person(franchise_level, age_class):
+        return CHILD_LVL_TO_AMOUNT[franchise_level] if age_class == 'AKL-KIN' else ADULT_LVL_TO_AMOUNT[franchise_level]
+
     @reactive.calc
     def location_display():
         loc_code = personal_details.get()['location']
@@ -179,7 +190,7 @@ def server(input, output, session):
                 ui.tags.label("Franchise", class_="form-label"),
                 ui.tags.select(
                     disabled=True,
-                    title="Please enter a number of 50 or higher above to enable this selection",
+                    title="Please enter your birth year.",
                     class_="form-select",
                     style="opacity: 0.6;"
                 ),
@@ -205,14 +216,73 @@ def server(input, output, session):
                            (premiums_df['Region'] == f"PR-REG CH{region}") & 
                            (premiums_df['Altersklasse'] == age_category()) &
                            (premiums_df['Franchisestufe'] == input.franchise()) &
-                           (premiums_df['Unfalleinschluss'] == input.accident_insurance())][['Versicherung', 'Tarifbezeichnung', 'Prämie']].sort_values(by='Prämie')
+                           (premiums_df['Unfalleinschluss'] == input.accident_insurance())].sort_values(by='Prämie')
 
         return df
 
 
     @render.data_frame
     def insurance_table():
-        return calculate_data()
+        return render.DataGrid(
+            calculate_data()[['Versicherung', 'Tarifbezeichnung', 'Prämie']], 
+            selection_mode="row"
+        )
+
+    @render.plot
+    def franchises_comparison_plot():
+        selected = input.insurance_table_selected_rows()
+
+        # # Debug information
+        # print(f"Selected rows: {selected}")
+        # print(f"Type: {type(selected)}")
+        # print(f"Length: {len(selected) if selected else 'None/Empty'}")
+
+        if not selected:
+            return None
+        
+        df = calculate_data()
+        row = df.iloc[selected[0]]
+        insurance_provider, insurance_plan = row['Versicherung'], row['Tarifbezeichnung']
+        
+        franchise_levels_to_compare = premiums_df[
+            (premiums_df['Versicherung'] == insurance_provider) &
+            (premiums_df['Tarifbezeichnung'] == insurance_plan) &
+            (premiums_df['Unfalleinschluss'] == row['Unfalleinschluss']) &
+            (premiums_df['Kanton'] == row['Kanton']) &
+            (premiums_df['Region'] == row['Region']) &
+            (premiums_df['Altersklasse'] == row['Altersklasse'])
+        ]
+
+        # Create treatment costs range (0 to 10,000 CHF)
+        treatment_costs = np.linspace(0, 10000, 1000)
+
+        fig, ax = plt.subplots(figsize=(8, 5))
+
+
+        for _, franchise_row in franchise_levels_to_compare.iterrows():    
+            premium_amount = franchise_row['Prämie']
+            franchise_amount = franchise_amount_for_person(franchise_row['Franchisestufe'], row['Altersklasse'])
+            annual_costs = np.array([
+                calculate_annual_cost(x, franchise_amount, premium_amount)
+                for x in treatment_costs
+            ])
+
+            ax.plot(treatment_costs, annual_costs, label=f'Franchise {franchise_amount} CHF')
+
+        ax.set_xlabel('Treatment Costs (CHF)')
+        ax.set_ylabel('Total Costs for You (CHF)')
+        ax.set_title(f'Annual Total Costs for You: {insurance_provider} - {insurance_plan}')
+        ax.legend()
+        ax.grid(True)
+
+        return fig
+      
     
+    def calculate_annual_cost(treatment_costs, franchise_level, premium):
+        amount_after_franchise = max(0, treatment_costs - franchise_level)
+        costs_to_cover_after_franchise = min(amount_after_franchise * DECIMAL_AFTER_FRANCHISE, MAX_AMOUNT_AFTER_FRANCHISE)
+        total_treatment_costs_to_cover = min(treatment_costs, franchise_level) + costs_to_cover_after_franchise
+        total_cost = total_treatment_costs_to_cover + 12 * premium
+        return total_cost
 
 app = App(app_ui, server)
