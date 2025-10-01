@@ -116,7 +116,8 @@ def server(input, output, session):
                 ui.input_action_button("modify_details", "Modify"),
                 ui.card_header("Insurance Cost Comparison"),
                 ui.output_data_frame("insurance_table"),
-                ui.output_plot("deductibles_comparison_plot")
+                ui.output_plot("deductibles_comparison_plot"),
+                ui.output_data_frame("calculate_annual_cost_table")
             )
 
 
@@ -283,8 +284,47 @@ def server(input, output, session):
         ax.grid(True)
 
         return fig
-      
-    
+
+    @render.data_frame
+    def calculate_annual_cost_table():
+        treatment_costs = [0, 300, 500, 1000, 1500, 2000, 3000,5000, 10000]
+
+        selected = input.insurance_table_selected_rows()
+
+        if not selected:
+            return None
+        
+        df = calculate_data()
+        row = df.iloc[selected[0]]
+        insurance_provider, insurance_plan = row['Versicherung'], row['Tarifbezeichnung']
+
+        deductible_levels_to_compare = premiums_df[
+            (premiums_df['Versicherung'] == insurance_provider) &
+            (premiums_df['Tarifbezeichnung'] == insurance_plan) &
+            (premiums_df['Unfalleinschluss'] == row['Unfalleinschluss']) &
+            (premiums_df['Kanton'] == row['Kanton']) &
+            (premiums_df['Region'] == row['Region']) &
+            (premiums_df['Altersklasse'] == row['Altersklasse'])
+        ]
+
+        #     df = pd.DataFrame(data)
+
+        # # Create MultiIndex columns
+        # # Top level: empty for first column, 'Deductible level in CHF' for deductible columns
+        # top_level = ['', 'Deductible level in CHF'] * len(deductible_levels)
+        # # But we want treatment cost col alone, then all deductible columns together:
+        # columns_tuples = [('','Treatment Costs during the year')] + [('Deductible level in CHF', str(level) + ' CHF') for level in deductible_levels]
+
+        # df.columns = pd.MultiIndex.from_tuples(columns_tuples)
+
+        result_df = pd.DataFrame({"Treatment Costs during the year": [f"{treatment_cost} CHF" for treatment_cost in treatment_costs]})
+        for _, deductible_row in deductible_levels_to_compare.iterrows():    
+            premium_amount = deductible_row['Prämie']
+            deductible_amount = deductible_amount_for_person(deductible_row['Franchisestufe'], row['Altersklasse'])
+            result_df[f"{deductible_amount} CHF Deductible"] = [f"{calculate_annual_cost(treatment_cost, deductible_amount, premium_amount):.2f} CHF" for treatment_cost in treatment_costs]
+
+        return result_df
+
     def calculate_annual_cost(treatment_costs, deductible_level, premium):
         amount_after_deductible = max(0, treatment_costs - deductible_level)
         costs_to_cover_after_deductible = min(amount_after_deductible * DECIMAL_AFTER_DEDUCTIBLE, MAX_AMOUNT_AFTER_DEDUCTIBLE)
