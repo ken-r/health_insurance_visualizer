@@ -136,6 +136,13 @@ def server(input, output, session):
     @reactive.effect
     @reactive.event(input.modify_details)
     def back_to_landing():
+        previous_inputs = personal_details()
+        if previous_inputs:
+            ui.update_numeric("birth_year", value=previous_inputs['birth_year'])
+            ui.update_radio_buttons("accident_insurance", selected=previous_inputs['accident_insurance'])
+            ui.update_select("deductible", selected=previous_inputs['deductible'])
+            ui.update_select("location", selected=previous_inputs['location'])
+        
         page_state.set('landing')
 
     @reactive.calc
