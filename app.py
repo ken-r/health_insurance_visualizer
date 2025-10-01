@@ -61,6 +61,12 @@ try:
 
     premium_regions_df = pd.read_excel("https://www.priminfo.admin.ch/downloads/praemienregionen.xlsx", sheet_name='A_COM', skiprows=4,engine="openpyxl")
 
+    insurance_model_restrictions_df = pd.read_csv("https://opendata.bagnet.ch/?r=/download&path=L1ByYWVtaWVuL0Vpbnp1Z3NnZWJpZXRlLmNzdg%3D%3D", sep=";")
+
+    # We only need the rows where there is a restriction
+    insurance_model_restrictions_df = insurance_model_restrictions_df[insurance_model_restrictions_df["Eingeschränkt"] == "Y"]
+    # Convert the "Gemeinden-BFS" column from comma-separated strings to lists of integers
+    insurance_model_restrictions_df["Gemeinden-BFS"] = insurance_model_restrictions_df["Gemeinden-BFS"].apply(lambda x: [int(i) for i in x.split(",")] if pd.notna(x) else x)
     # The original excel file has column names on two lines: First Line = German name, Second Line = French translation
     premium_regions_df.columns = [col.splitlines()[0] for col in premium_regions_df.columns]
     print("Loaded data successfully.")
@@ -72,7 +78,7 @@ except Exception as e:
 # Calculate count of each PLZ and append as a new column
 premium_regions_df['plz_count'] = premium_regions_df.groupby('PLZ')['PLZ'].transform('count')
 
-municipality_choices = {'': ''} | {f"{row['Kanton']}|{row['Region']}|{row['PLZ']}|{row['Ort']}|{row['Gemeinde']}": f"{row['PLZ']} {row['Ort']}" + (f" (Gemeinde {row['Gemeinde']})" if row['plz_count'] > 1 else "")
+municipality_choices = {'': ''} | {f"{row['BFS-Nr.']}|{row['Kanton']}|{row['Region']}|{row['PLZ']}|{row['Ort']}|{row['Gemeinde']}": f"{row['PLZ']} {row['Ort']}" + (f" (Gemeinde {row['Gemeinde']})" if row['plz_count'] > 1 else "")
                 for _, row in premium_regions_df.iterrows()}
 
 app_ui = ui.page_fixed( 
@@ -210,15 +216,21 @@ def server(input, output, session):
     @reactive.event(input.calculate_offers)
     def calculate_data():
         df = pd.DataFrame()
-        canton, region, *_, = input.location().split('|')
+        bfs_nr, canton, region, *_, = input.location().split('|')
 
         df = premiums_df[(premiums_df['Kanton'] == canton) & 
                            (premiums_df['Region'] == f"PR-REG CH{region}") & 
                            (premiums_df['Altersklasse'] == age_category()) &
                            (premiums_df['Franchisestufe'] == input.deductible()) &
                            (premiums_df['Unfalleinschluss'] == input.accident_insurance())].sort_values(by='Prämie')
-
-        return df
+        
+        join_keys = ['Kanton', 'Region', 'Versicherer', 'Tarif', 'Tariftyp']
+        merged = pd.merge(df, insurance_model_restrictions_df[join_keys + ['Gemeinden-BFS']], on=join_keys, how='left')
+        
+        # Filter out rows where there is a restriction for the selected municipality (BFS-Nr.)
+        filtered = merged[(merged['Gemeinden-BFS'].isna()) | (merged['Gemeinden-BFS'].apply(lambda x: bfs_nr in x if isinstance(x, list) else False))]  
+        
+        return filtered.drop(columns=['Gemeinden-BFS'])
 
 
     @render.data_frame
