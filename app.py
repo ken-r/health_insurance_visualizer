@@ -47,11 +47,31 @@ BAG_VERSICHERER = {
     1318: "Wädenswil",
 }
 
-MAX_AMOUNT_AFTER_DEDUCTIBLE = 700
+MAX_AMOUNT_YOU_PAY_AFTER_DEDUCTIBLE = 700
 DECIMAL_AFTER_DEDUCTIBLE = 0.10 # We need to pay 10% of costs after deductible
 
 DEDUCTIBLE_CHILD_LVL_TO_AMOUNT = {"FRAST1": 0, "FRAST2": 100, "FRAST3": 200, "FRAST4": 300, "FRAST5": 400, "FRAST6": 500, "FRAST7": 600}
 DEDUCTIBLE_ADULT_LVL_TO_AMOUNT = {"FRAST1": 300, "FRAST2": 500, "FRAST3": 1000, "FRAST4": 1500, "FRAST5": 2000, "FRAST6": 2500}
+
+def calculate_annual_cost_health_insurance(treatment_costs_during_year, premium_per_month, deductible_amount):
+        amount_after_deductible = max(0, treatment_costs_during_year - deductible_amount)
+        costs_to_cover_after_deductible = min(amount_after_deductible * DECIMAL_AFTER_DEDUCTIBLE, MAX_AMOUNT_YOU_PAY_AFTER_DEDUCTIBLE)
+        total_treatment_costs_to_cover = min(treatment_costs_during_year, deductible_amount) + costs_to_cover_after_deductible
+        total_cost = total_treatment_costs_to_cover + 12 * premium_per_month
+        return total_cost
+    
+
+def calculate_annual_cost_insurance(treatment_costs_during_year, premium_per_month, deductible_amount, percentage_covered, max_amount_insurance_pays):
+    # Generally, you will need to pay the following amount (per year) by yourself:
+    # 1. premium
+    # 2. the difference between the treatment costs and the amount that the insurance pays,
+    #    where the amount that the insurance pays is MIN(percentage_covered * amount_after_deductible, max_amount_insurance_pays)
+    premium_per_year = 12 * premium_per_month
+    amount_after_deductible = max(treatment_costs_during_year - deductible_amount, 0)
+    insurance_pays = min(percentage_covered * amount_after_deductible, max_amount_insurance_pays)
+    total_costs_you_pay = premium_per_year + (treatment_costs_during_year - insurance_pays)
+    return total_costs_you_pay
+
 
 # Load data once when app starts (outside server function)
 try:
@@ -368,7 +388,7 @@ def server(input, output, session):
             premium_amount = deductible_row['Prämie']
             deductible_amount = deductible_amount_for_person(deductible_row['Franchisestufe'], row['Altersklasse'])
             annual_costs = np.array([
-                calculate_annual_cost(x, deductible_amount, premium_amount)
+                calculate_annual_cost_health_insurance(treatment_costs_during_year=x, premium_per_month=premium_amount, deductible_amount=deductible_amount)
                 for x in treatment_costs
             ])
 
@@ -404,29 +424,13 @@ def server(input, output, session):
             (premiums_df['Altersklasse'] == row['Altersklasse'])
         ]
 
-        #     df = pd.DataFrame(data)
-
-        # # Create MultiIndex columns
-        # # Top level: empty for first column, 'Deductible level in CHF' for deductible columns
-        # top_level = ['', 'Deductible level in CHF'] * len(deductible_levels)
-        # # But we want treatment cost col alone, then all deductible columns together:
-        # columns_tuples = [('','Treatment Costs during the year')] + [('Deductible level in CHF', str(level) + ' CHF') for level in deductible_levels]
-
-        # df.columns = pd.MultiIndex.from_tuples(columns_tuples)
-
         result_df = pd.DataFrame({"Treatment Costs during the year": [f"{treatment_cost} CHF" for treatment_cost in treatment_costs]})
         for _, deductible_row in deductible_levels_to_compare.iterrows():    
             premium_amount = deductible_row['Prämie']
             deductible_amount = deductible_amount_for_person(deductible_row['Franchisestufe'], row['Altersklasse'])
-            result_df[f"{deductible_amount} CHF Deductible"] = [f"{calculate_annual_cost(treatment_cost, deductible_amount, premium_amount):.2f} CHF" for treatment_cost in treatment_costs]
+            result_df[f"{deductible_amount} CHF Deductible"] = [f"{calculate_annual_cost_health_insurance(treatment_costs_during_year=treatment_cost, premium_per_month=premium_amount, deductible_amount=deductible_amount):.2f} CHF" for treatment_cost in treatment_costs]
 
         return result_df
 
-    def calculate_annual_cost(treatment_costs, deductible_level, premium):
-        amount_after_deductible = max(0, treatment_costs - deductible_level)
-        costs_to_cover_after_deductible = min(amount_after_deductible * DECIMAL_AFTER_DEDUCTIBLE, MAX_AMOUNT_AFTER_DEDUCTIBLE)
-        total_treatment_costs_to_cover = min(treatment_costs, deductible_level) + costs_to_cover_after_deductible
-        total_cost = total_treatment_costs_to_cover + 12 * premium
-        return total_cost
-
+    
 app = App(app_ui, server)
