@@ -88,8 +88,17 @@ app_ui = ui.page_fixed(
         
 def server(input, output, session):
     page_state = reactive.Value('landing')
-    personal_details = reactive.Value({})
+    # Store whether user has tried to calculate offers (to show validation errors)
+    calculation_attempted = reactive.Value(False)
+    personal_details = reactive.Value({
+        "birth_year": None,
+        "location": None,
+        "deductible": None,
+        "accident_insurance": None
+    })
 
+    # TODO: Decrease size of the UI elements to reduce vertical scrolling ...
+    @output
     @render.ui
     def dynamic_page():
         if page_state() == 'landing':
@@ -103,7 +112,8 @@ def server(input, output, session):
                     choices={"MIT-UNF": "Yes", "OHN-UNF": "No"},
                     selected="MIT-UNF"
                 ),
-                ui.input_action_button("calculate_offers", "Calculate Insurance Offers")
+                ui.input_action_button("calculate_offers", "Calculate Insurance Offers"),
+                ui.output_ui("input_errors_display")
             )
         elif page_state() == 'results':
             personal_details_locked = personal_details.get()
@@ -123,20 +133,22 @@ def server(input, output, session):
 
     @reactive.effect
     @reactive.event(input.calculate_offers)
-    def store_details():
-        # TODO: Add input checks
-        personal_details.set({
-            "birth_year": input.birth_year(),
-            "location": input.location(),
-            "deductible": input.deductible(),
-            "accident_insurance": input.accident_insurance()
-        })
-        page_state.set('results')
+    def calculate_offers():
+        calculation_attempted.set(True)
+        if not has_input_errors():
+            personal_details.set({
+                "birth_year": input.birth_year(),
+                "location": input.location(),
+                "deductible": input.deductible(),
+                "accident_insurance": input.accident_insurance()
+            })
+            page_state.set('results')
     
     @reactive.effect
     @reactive.event(input.modify_details)
     def back_to_landing():
         previous_inputs = personal_details()
+        calculation_attempted.set(False)
         if previous_inputs:
             ui.update_numeric("birth_year", value=previous_inputs['birth_year'])
             ui.update_radio_buttons("accident_insurance", selected=previous_inputs['accident_insurance'])
@@ -144,6 +156,84 @@ def server(input, output, session):
             ui.update_select("location", selected=previous_inputs['location'])
         
         page_state.set('landing')
+    # Use a reactive expression to memoize the landing page UI to avoid rebuilding on each re-render
+    @reactive.Calc
+    def landing_ui():
+        personal_values = personal_details()
+        return ui.card(
+                ui.input_numeric("birth_year", "Year of birth", value=personal_values['birth_year'], min=1910, max=2024),
+                ui.input_selectize("location", "Enter Postal Code or Municipality:", choices=municipality_choices, 
+                                   # By default, we want the selection to be empty. But the empty option
+                                   # should not be shown in the dropdown list.
+                                   options={"allowEmptyOption": True, "showEmptyOptionInDropdown": False},
+                                   selected=personal_values['location']
+                                ),
+                ui.output_ui("deductible_select"),
+                ui.input_radio_buttons(
+                    "accident_insurance",
+                    "Include accident insurance?",
+                    choices={"MIT-UNF": "Yes", "OHN-UNF": "No"},
+                    selected=personal_values['accident_insurance']
+                ),
+                ui.input_action_button("calculate_offers", "Calculate Insurance Offers"),
+                ui.output_ui("input_errors_display")
+        )
+    
+    @reactive.calc
+    def get_input_errors():
+        errors = []
+        if not age_validation():
+            errors.append("Please enter a valid birth year between 1900 and 2025.")
+        
+        if not input.location():
+            errors.append("Please select a municipality.")
+        
+        if not input.deductible():
+            errors.append("Please select a deductible.")
+        
+        if not input.accident_insurance():
+            errors.append("Please select whether to include accident insurance.")
+        
+        return errors
+
+    @reactive.calc
+    def has_input_errors():
+        return bool(get_input_errors())
+
+
+    # When user clicks "Calculate Offers", switch to results view
+    @reactive.Effect
+    @reactive.event(input.calculate_offers)
+    def _():
+        calculation_attempted.set(True)
+        if not has_input_errors():
+            personal_details.set({
+                "birth_year": input.birth_year(),
+                "location": input.location(),
+                "deductible": input.deductible(),
+                "accident_insurance": input.accident_insurance()
+            })
+            page_state.set("results")
+
+    @render.ui
+    def input_errors_display():
+        if calculation_attempted() and has_input_errors():
+            errors = get_input_errors()
+            return ui.div(
+                ui.tags.div(
+                    ui.tags.strong("Please fix the following errors:"),
+                    ui.tags.ul([ui.tags.li(error) for error in errors]),
+                    class_="alert alert-danger",
+                    role="alert"
+                )
+            )
+        else:
+            return ui.div()
+        
+    @reactive.Effect
+    def _():
+        if input.modify_details():
+            page_state.set("landing")
 
     @reactive.calc
     def is_child():
