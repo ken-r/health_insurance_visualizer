@@ -149,6 +149,15 @@ def server(input, output, session):
                 ui.output_plot("deductibles_comparison_plot"),
                 ui.output_data_frame("calculate_annual_cost_table")
             )
+        
+        elif page_state() == 'general_insurance_calculation':
+            return ui.card(
+                ui.input_text("insurance_name", "Insurance name", value=""),
+                ui.input_numeric("premium_per_month", "Premium per month (CHF)", value=0, min=0, step=0.1),
+                ui.input_numeric("deductible_amount", "Deductible amount (CHF)", value=0, min=0, step=50),
+                ui.input_numeric("percentage_covered", "Covered by insurance (%)", value=50, min=0, max=100, step=5),
+                ui.input_numeric("treatment_costs_during_year", "Treatment costs during year (CHF)", value=0, min=0, step=50),
+            )
 
 
     @reactive.effect
@@ -404,7 +413,7 @@ def server(input, output, session):
 
     @render.data_frame
     def calculate_annual_cost_table():
-        treatment_costs = [0, 300, 500, 1000, 1500, 2000, 3000,5000, 10000]
+        treatment_costs = [0, 300, 500, 1000, 1500, 2000, 3000, 5000, 10000]
 
         selected = input.insurance_table_selected_rows()
 
