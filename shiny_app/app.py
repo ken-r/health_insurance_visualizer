@@ -107,7 +107,9 @@ app_ui = ui.page_fixed(
         )
         
 def server(input, output, session):
-    page_state = reactive.Value('landing')
+    page_state = reactive.Value('input_insurance_calculation')
+    selectize_updated = reactive.Value(False)
+
     # Store whether user has tried to calculate offers (to show validation errors)
     calculation_attempted = reactive.Value(False)
     personal_details = reactive.Value({
@@ -121,16 +123,18 @@ def server(input, output, session):
     @output
     @render.ui
     def dynamic_page():
-        if page_state() == 'landing':
+        if page_state() == 'input_insurance_calculation':
+            previous_inputs = personal_details.get()
+            selectize_updated.set(False)
             return ui.card(
-                ui.input_numeric("birth_year", "Year of birth", value=2000, min=1910, max=2024),
+                ui.input_numeric("birth_year", "Year of birth", value=previous_inputs.get('birth_year'), min=1900, max=2025, step=1),
                 ui.output_ui("municipality_select"),
                 ui.output_ui("deductible_select"),
                 ui.input_radio_buttons(
                     "accident_insurance",
                     "Include accident insurance?",
                     choices={"MIT-UNF": "Yes", "OHN-UNF": "No"},
-                    selected="MIT-UNF"
+                    selected=previous_inputs.get('accident_insurance')
                 ),
                 ui.input_action_button("calculate_offers", "Calculate Insurance Offers"),
                 ui.output_ui("input_errors_display")
@@ -172,42 +176,8 @@ def server(input, output, session):
                 "accident_insurance": input.accident_insurance()
             })
             page_state.set('results')
-    
-    @reactive.effect
-    @reactive.event(input.modify_details)
-    def back_to_landing():
-        previous_inputs = personal_details()
-        calculation_attempted.set(False)
-        if previous_inputs:
-            ui.update_numeric("birth_year", value=previous_inputs['birth_year'])
-            ui.update_radio_buttons("accident_insurance", selected=previous_inputs['accident_insurance'])
-            ui.update_select("deductible", selected=previous_inputs['deductible'])
-            ui.update_select("location", selected=previous_inputs['location'])
         
-        page_state.set('landing')
-    # Use a reactive expression to memoize the landing page UI to avoid rebuilding on each re-render
-    @reactive.Calc
-    def landing_ui():
-        personal_values = personal_details()
-        return ui.card(
-                ui.input_numeric("birth_year", "Year of birth", value=personal_values['birth_year'], min=1910, max=2024),
-                ui.input_selectize("location", "Enter Postal Code or Municipality:", choices=municipality_choices, 
-                                   # By default, we want the selection to be empty. But the empty option
-                                   # should not be shown in the dropdown list.
-                                   options={"allowEmptyOption": True, "showEmptyOptionInDropdown": False},
-                                   selected=personal_values['location']
-                                ),
-                ui.output_ui("deductible_select"),
-                ui.input_radio_buttons(
-                    "accident_insurance",
-                    "Include accident insurance?",
-                    choices={"MIT-UNF": "Yes", "OHN-UNF": "No"},
-                    selected=personal_values['accident_insurance']
-                ),
-                ui.input_action_button("calculate_offers", "Calculate Insurance Offers"),
-                ui.output_ui("input_errors_display")
-        )
-    
+
     @reactive.calc
     def get_input_errors():
         errors = []
@@ -260,9 +230,9 @@ def server(input, output, session):
             return ui.div()
         
     @reactive.Effect
+    @reactive.event(input.modify_details)
     def _():
-        if input.modify_details():
-            page_state.set("landing")
+        page_state.set("input_insurance_calculation")
 
     @reactive.calc
     def is_child():
@@ -300,15 +270,31 @@ def server(input, output, session):
 
     @render.ui
     def municipality_select():
-        return ui.input_selectize(
+        selectize_ui = ui.input_selectize(
             "location",
-            "Enter Postal Code or Municipality:",
-            choices=municipality_choices, 
-            # By default, we want the selection to be empty. But the empty option
-            # should not be shown in the dropdown list.
+            "Enter Postal Code or Municipality",
+            choices=[],   # Empty at first load because we will update it later for much faster performance.
             options={"allowEmptyOption": True, "showEmptyOptionInDropdown": False},
-            selected=""
+            selected="",
         )
+        return selectize_ui
+
+    # Update location selection choices after the UI is rendered. This way is much faster.
+    @reactive.effect
+    def _update_selectize_choices():
+        # Update selectize choices after the UI is rendered
+        previous_inputs = personal_details.get()
+        previous_location = previous_inputs.get('location') if previous_inputs else None
+        # Only update when we're on the input page and the location selection box exists.
+        if page_state() == 'input_insurance_calculation' and ('location' in session.input) and not selectize_updated():
+            ui.update_selectize(
+                "location",
+                choices=municipality_choices,
+                server=True,
+                session=session,
+                selected=previous_location # Restore the previous selection
+            )
+            selectize_updated.set(True)
     
     @reactive.calc
     def age_validation():   
@@ -319,6 +305,7 @@ def server(input, output, session):
     def deductible_select():
         birth_year = input.birth_year()
         if not age_validation():
+            # If the age is not set properly, disable the deductible selection
             return ui.div(
                 ui.tags.label("Deductible", class_="form-label"),
                 ui.tags.select(
@@ -330,16 +317,18 @@ def server(input, output, session):
                 class_="form-group shiny-input-container"
                 ) 
         deductible_options = DEDUCTIBLE_ADULT_LVL_TO_AMOUNT if birth_year < 2008 else DEDUCTIBLE_CHILD_LVL_TO_AMOUNT
-
+        
+        previous_inputs = personal_details.get()
+        previous_deductible = previous_inputs.get('deductible') if previous_inputs else None
         return ui.input_select(
             "deductible",
             "Deductible",
             choices=deductible_options,
-            selected=None
+            selected=previous_deductible
         )
     
 
-    # Reactive expression triggered only when button is clicked
+    # Filter all insurance offers based on the inputs
     @reactive.event(input.calculate_offers)
     def calculate_data():
         df = pd.DataFrame()
@@ -366,7 +355,9 @@ def server(input, output, session):
             calculate_data()[['Versicherung', 'Tarifbezeichnung', 'Prämie']], 
             selection_mode="row"
         )
-
+    
+    # Create a plot comparing different deductible levels for the selected insurance plan.
+    # This allows you to visually see what deductible level is best for what treatment costs.
     @render.plot
     def deductibles_comparison_plot():
         selected = input.insurance_table_selected_rows()
