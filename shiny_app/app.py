@@ -1,4 +1,4 @@
-from shiny import App, reactive, render, ui
+from shiny import App, reactive, render, ui, req
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -164,49 +164,26 @@ def server(input, output, session):
                 ui.input_numeric("treatment_costs_during_year", "Treatment costs during year (CHF)", value=0, min=0, step=50),
             )
 
-
-    @reactive.effect
-    @reactive.event(input.calculate_offers)
-    def calculate_offers():
-        calculation_attempted.set(True)
-        if not has_input_errors():
-            personal_details.set({
-                "birth_year": input.birth_year(),
-                "location": input.location(),
-                "deductible": input.deductible(),
-                "accident_insurance": input.accident_insurance()
-            })
-            page_state.set('results')
         
-
     @reactive.calc
     def get_input_errors():
         errors = []
         if not age_validation():
-            errors.append("Please enter a valid birth year between 1900 and 2025.")
-        
+            errors.append("Please enter a valid birth year between 1900 and 2025 and then choose a deductible level.")
         if not input.location():
             errors.append("Please select a municipality.")
-        
-        if not input.deductible():
-            errors.append("Please select a deductible.")
-        
         if not input.accident_insurance():
             errors.append("Please select whether to include accident insurance.")
-        
         return errors
-
-    @reactive.calc
-    def has_input_errors():
-        return bool(get_input_errors())
 
 
     # When user clicks "Calculate Offers", switch to results view
     @reactive.Effect
     @reactive.event(input.calculate_offers)
     def _():
+        errors = get_input_errors()
         calculation_attempted.set(True)
-        if not has_input_errors():
+        if len(errors) == 0:
             personal_details.set({
                 "birth_year": input.birth_year(),
                 "location": input.location(),
@@ -217,8 +194,8 @@ def server(input, output, session):
 
     @render.ui
     def input_errors_display():
-        if calculation_attempted() and has_input_errors():
-            errors = get_input_errors()
+        errors = get_input_errors()
+        if calculation_attempted() and len(errors) > 0:
             return ui.div(
                 ui.tags.div(
                     ui.tags.strong("Please fix the following errors:"),
@@ -234,6 +211,7 @@ def server(input, output, session):
     @reactive.event(input.modify_details)
     def _():
         page_state.set("input_insurance_calculation")
+        calculation_attempted.set(False)
 
     @reactive.calc
     def is_child():
@@ -298,7 +276,7 @@ def server(input, output, session):
             selectize_updated.set(True)
     
     @reactive.calc
-    def age_validation():   
+    def age_validation():
         birth_year = input.birth_year()
         return birth_year is not None and isinstance(birth_year, int) and 1900 <= birth_year <= 2025
 
@@ -332,6 +310,7 @@ def server(input, output, session):
     # Filter all insurance offers based on the inputs
     @reactive.event(input.calculate_offers)
     def calculate_data():
+        req(len(get_input_errors()) == 0) # Only run the calculation once there are no input errors.
         df = pd.DataFrame()
         bfs_nr, canton, region, *_, = input.location().split('|')
 
