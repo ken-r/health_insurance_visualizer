@@ -101,8 +101,8 @@ premium_regions_df['plz_count'] = premium_regions_df.groupby('PLZ')['PLZ'].trans
 municipality_choices = {'': ''} | {f"{row['BFS-Nr.']}|{row['Kanton']}|{row['Region']}|{row['PLZ']}|{row['Ort']}|{row['Gemeinde']}": f"{row['PLZ']} {row['Ort']}" + (f" (Gemeinde {row['Gemeinde']})" if row['plz_count'] > 1 else "")
                 for _, row in premium_regions_df.iterrows()}
 
-app_ui = ui.page_fixed( 
-        ui.panel_title("Swiss Health Insurance Premium Visualizer"),
+app_ui = ui.page_fixed(
+        ui.panel_title(ui.h2("Swiss Health Insurance Premium Calculator for 2026", class_="pt-4 pb-3")), # Add some padding to top and bottom of title
         ui.output_ui("dynamic_page"),
         )
         
@@ -127,6 +127,7 @@ def server(input, output, session):
             previous_inputs = personal_details.get()
             selectize_updated.set(False)
             return ui.card(
+                ui.p("Please enter your personal details to calculate health insurance offers for 2026."),
                 ui.input_numeric("birth_year", "Year of birth", value=previous_inputs.get('birth_year'), min=1900, max=2025, step=1),
                 ui.output_ui("municipality_select"),
                 ui.output_ui("deductible_select"),
